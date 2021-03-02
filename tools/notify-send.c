@@ -122,6 +122,21 @@ notify_notification_set_hint_variant (NotifyNotification *notification,
 }
 
 static void
+_handle_action (NotifyNotification * notify, 
+                char *action,
+                gpointer user_data)
+{
+        if (user_data != NULL) {
+                // Use the exact action name from user input
+                char *s = g_strdup(user_data);
+                printf ("%s\n", s);
+                g_free(s);
+        }
+        notify_notification_close (notify, NULL);
+        g_main_loop_quit (loop);
+}
+
+static void
 _handle_closed (NotifyNotification * notify, 
                 gpointer user_data)
 {
@@ -146,6 +161,7 @@ main (int argc, char *argv[])
         static char        *icons = NULL;
         static char       **n_text = NULL;
         static char       **hints = NULL;
+        static char       **actions = NULL;
         static gboolean     do_version = FALSE;
         static gboolean     hint_error = FALSE;
         static gboolean     wait = FALSE;
@@ -180,6 +196,13 @@ main (int argc, char *argv[])
                  N_
                  ("Wait for the notification to be closed before exiting. Timeout must not be infinite."),
                  NULL},
+                {"action", 'A', 0, G_OPTION_ARG_FILENAME_ARRAY, &actions,
+                 N_
+                 ("Specifies the actions to display to the user. Implies --wait to wait for user input."
+                 " May be set multiple times. The name of the action (the words up to the first colon) "
+                 "is output to stdout. If NAME is not specified, the numerical index of the option is "
+                 "used (starting with 1)."),
+                 N_("[NAME=]Text...")},
                 {"version", 'v', 0, G_OPTION_ARG_NONE, &do_version,
                  N_("Version of the package."),
                  NULL},
@@ -297,6 +320,33 @@ main (int argc, char *argv[])
         if (wait && expire_timeout == 0)
                 wait = FALSE;
 
+        /* Parse actions */
+        if (actions != NULL) {
+                gint    i = 0, l;
+                char    *action = NULL, *name = NULL;
+                gchar   **spl = NULL;
+
+                while ((action = actions[i++])) {
+                        spl = g_strsplit(action, "=", 2);
+                        l = g_strv_length (spl);
+                        if (l == 1)
+                                name = g_strdup_printf("%i", i);
+                        else
+                                name = g_strdup(spl[0]);
+
+                        notify_notification_add_action (notify,
+                                                        name,
+                                                        spl[l-1],
+                                                        NOTIFY_ACTION_CALLBACK(&_handle_action),
+                                                        name,
+                                                        NULL);
+
+                        g_strfreev (spl);
+                }
+                g_strfreev(actions);
+                wait = TRUE;
+        }
+
         if (wait)
                 g_signal_connect (G_OBJECT (notify),
                         "closed",
@@ -307,7 +357,8 @@ main (int argc, char *argv[])
                 hint_error = !notify_notification_show (notify, NULL);
 
         if (wait && !hint_error) {
-                if (expire_timeout != NOTIFY_EXPIRES_DEFAULT)
+                // Don't leave us hanging. (Maybe a switch to disable this?)
+                if (expire_timeout > 0 && actions == NULL)
                         g_timeout_add (expire_timeout, G_SOURCE_FUNC(&_handle_timeout), NULL);
                 loop = g_main_loop_new (NULL, FALSE);
                 g_main_loop_run (loop);

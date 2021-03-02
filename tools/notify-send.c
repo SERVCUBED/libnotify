@@ -32,6 +32,7 @@
 #define GETTEXT_PACKAGE NULL
 
 static NotifyUrgency urgency = NOTIFY_URGENCY_NORMAL;
+static GMainLoop *loop;
 
 static gboolean
 g_option_arg_urgency_cb (const char *option_name,
@@ -120,6 +121,20 @@ notify_notification_set_hint_variant (NotifyNotification *notification,
         return TRUE;
 }
 
+static void
+_handle_closed (NotifyNotification * notify, 
+                gpointer user_data)
+{
+        g_main_loop_quit (loop);
+}
+
+static void
+_handle_timeout (gpointer data)
+{
+        // g_message ("Quitting due to local timeout");
+        g_main_loop_quit (loop);
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -133,6 +148,7 @@ main (int argc, char *argv[])
         static char       **hints = NULL;
         static gboolean     do_version = FALSE;
         static gboolean     hint_error = FALSE;
+        static gboolean     wait = FALSE;
         static glong        expire_timeout = NOTIFY_EXPIRES_DEFAULT;
         GOptionContext     *opt_ctx;
         NotifyNotification *notify;
@@ -160,6 +176,10 @@ main (int argc, char *argv[])
                  N_
                  ("Specifies basic extra data to pass. Valid types are int, double, string and byte."),
                  N_("TYPE:NAME:VALUE")},
+                {"wait", 'w', 0, G_OPTION_ARG_NONE, &wait,
+                 N_
+                 ("Wait for the notification to be closed before exiting. Timeout must not be infinite."),
+                 NULL},
                 {"version", 'v', 0, G_OPTION_ARG_NONE, &do_version,
                  N_("Version of the package."),
                  NULL},
@@ -274,8 +294,25 @@ main (int argc, char *argv[])
                 }
         }
 
+        if (wait && expire_timeout == 0)
+                wait = FALSE;
+
+        if (wait)
+                g_signal_connect (G_OBJECT (notify),
+                        "closed",
+                        G_CALLBACK (&_handle_closed),
+                        NULL);
+
         if (!hint_error)
-                notify_notification_show (notify, NULL);
+                hint_error = !notify_notification_show (notify, NULL);
+
+        if (wait && !hint_error) {
+                if (expire_timeout != NOTIFY_EXPIRES_DEFAULT)
+                        g_timeout_add (expire_timeout, G_SOURCE_FUNC(&_handle_timeout), NULL);
+                loop = g_main_loop_new (NULL, FALSE);
+                g_main_loop_run (loop);
+                g_main_loop_unref(loop);
+        }
 
         g_object_unref (G_OBJECT (notify));
 

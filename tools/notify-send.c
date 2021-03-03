@@ -321,7 +321,26 @@ main (int argc, char *argv[])
                 wait = FALSE;
 
         /* Parse actions */
-        if (actions != NULL) {
+        if (actions != NULL && !hint_error) {
+                GList *iter = notify_get_server_caps();
+                if (iter && g_list_length(iter)) {
+                        hint_error = TRUE;
+
+                        for (;iter != NULL; iter = iter->next) {
+                                if (strcasecmp(iter->data, "actions"))
+                                        continue;
+                                hint_error = FALSE;
+                                break;
+                        }
+
+                        g_list_free(iter);
+                        if (hint_error) {
+                                g_printerr(N_("Actions are not supported by this notifications server. Displaying non-interactively.\n"));
+                                wait = FALSE;
+                                goto err_cont;
+                        }
+                }
+
                 gint    i = 0, l;
                 char    *action = NULL, *name = NULL;
                 gchar   **spl = NULL;
@@ -354,11 +373,12 @@ main (int argc, char *argv[])
                         NULL);
 
         if (!hint_error)
-                hint_error = !notify_notification_show (notify, NULL);
+ err_cont:
+                hint_error |= !notify_notification_show (notify, NULL);
 
         if (wait && !hint_error) {
-                // Don't leave us hanging. (Maybe a switch to disable this?)
                 if (expire_timeout > 0 && actions == NULL)
+                        // Don't leave us hanging. (Maybe add a switch to disable this?)
                         g_timeout_add (expire_timeout, G_SOURCE_FUNC(&_handle_timeout), NULL);
                 loop = g_main_loop_new (NULL, FALSE);
                 g_main_loop_run (loop);
